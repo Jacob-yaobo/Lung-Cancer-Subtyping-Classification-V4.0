@@ -1,0 +1,57 @@
+# ===================================================================
+# Main Configuration for Lung Cancer Subtyping Project (V4.0)
+# ===================================================================
+# This file defines the primary paths and settings for the project.
+# It serves as a central point of configuration for all scripts
+# and notebooks to ensure consistency.
+
+# -------------------------------------------------------------------
+# Data Workflow & Organization Explanation
+# -------------------------------------------------------------------
+# 1. Data Ingestion & Structuring:
+#    - Raw NIfTI files, initially located at various paths, are processed
+#      by `notebooks/1_exploration/copy_raw_data.ipynb`.
+#    - This script copies and renames the files into a BIDS-like structure
+#      within the `data/0_nifti` directory.
+#    - The structure is: `data/0_nifti/sub-{subject_id}/sub-{subject_id}_{modality}.nii.gz`
+#      where {modality} can be 'pet', 'ct', 'seg-lung', or 'seg-lesion'.
+#
+# 2. Metadata Consolidation:
+#    - Multiple metadata files (DICOM headers, histology reports) from the
+#      `metadata/` directory are processed by `notebooks/1_exploration/organize_participant_table.ipynb`.
+#    - This script merges, cleans, and organizes the information into a single,
+#      master table: `participants.tsv`.
+#
+# 3. Linking Data and Metadata:
+#    - The `subject_id` column in `participants.tsv` serves as the primary key.
+#    - It directly corresponds to the `sub-{subject_id}` folder names in `data/0_nifti`,
+#      linking the imaging data with its corresponding clinical and pathological information.
+# -------------------------------------------------------------------
+
+# ===================================================================
+# File and Directory Paths
+# ===================================================================
+# Define relative paths from the project root directory.
+
+paths:
+  # Root directory for all processed NIfTI imaging data.
+  # This is the primary input for model training and analysis.
+  data_root: "data/0_nifti"
+
+  # Path to the master participant information file.
+  # This TSV file contains subject-level metadata.
+  participants_tsv: "metadata/participants.tsv"
+
+  # Directory for storing model outputs, logs, and checkpoints.
+  # (This is a placeholder for future steps)
+  output_dir: "results/"
+
+# ===================================================================
+# Dataset Settings (Example for future use)
+# ===================================================================
+dataset:
+  modalities:
+    - "pet"
+    - "ct"
+  # Labels or target variables can be defined here
+  # label_column: "Pathology"
