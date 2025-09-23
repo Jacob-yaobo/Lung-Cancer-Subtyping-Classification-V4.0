@@ -55,3 +55,7 @@ dataset:
     - "ct"
   # Labels or target variables can be defined here
   # label_column: "Pathology"
+
+preprocessing:
+  target_spacing: [1.5, 1.5, 3.0]
+  crop_method: "lung_ROI"
