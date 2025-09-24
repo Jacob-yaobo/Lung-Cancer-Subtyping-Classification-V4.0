@@ -59,3 +59,5 @@ dataset:
 preprocessing:
   target_spacing: [1.5, 1.5, 3.0]
   crop_method: "lung_ROI"
+  min_lung_size: 100 # Minimum number of voxels for a lung region to be kept
+  output_dir: "data/1_preprocessed" # Directory to save preprocessed files
