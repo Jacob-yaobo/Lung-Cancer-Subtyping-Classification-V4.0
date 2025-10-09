@@ -1,0 +1,25 @@
+{
+  "3-class_classification": {
+    "description": "ADC vs SCC vs SCLC multi-class classification.",
+    "labels": {
+      "ADC": 0,
+      "SCC": 1,
+      "SCLC": 2
+    }
+  },
+  "ADC_vs_SCC": {
+    "description": "Binary classification between ADC and SCC.",
+    "labels": {
+      "ADC": 0,
+      "SCC": 1
+    }
+  },
+  "NSCLC_vs_SCLC": {
+    "description": "Binary classification between Non-Small Cell (ADC+SCC) and Small Cell Lung Cancer.",
+    "labels": {
+      "ADC": 0,
+      "SCC": 0,
+      "SCLC": 1
+    }
+  }
+}
