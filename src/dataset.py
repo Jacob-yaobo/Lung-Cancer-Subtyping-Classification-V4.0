@@ -101,7 +101,6 @@ class LungCancerTransform:
         }
 
 
-
 class LungCancerDataset(Dataset):
     """
     用于肺癌亚型分类的PyTorch数据集类。
@@ -601,7 +600,7 @@ if __name__ == "__main__":
     
     # 获取一个样本
     if len(dataset) > 0:
-        modalities, sample_label = dataset[0]
+        modalities, sample_label = dataset[1000]
         print(f"\n样本模态:")
         print(f"  - CT形状: {modalities['ct'].shape}")      # 应该是 (3, H, W)
         print(f"  - PET形状: {modalities['pet'].shape}")    # 应该是 (3, H, W)
