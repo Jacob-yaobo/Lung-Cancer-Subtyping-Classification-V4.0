@@ -13,94 +13,6 @@ from torch.utils.data import Dataset
 from typing import Optional, Callable, Tuple, List, Dict, Any
 
 
-class LungCancerTransform:
-    """预处理和增强变换，用于标准化模态数据并转换为Tensor。
-
-    功能:
-    - 根据预设范围对不同模态执行线性归一化
-    - 可选地应用一致的数据增强（如albumentations）
-    - 将数组从(H, W, C)转为(C, H, W)并转换为PyTorch Tensor
-    """
-
-    def __init__(
-        self,
-        augmentations: Optional[Callable] = None,
-        normalization_ranges: Optional[Dict[str, Tuple[float, float]]] = None,
-        to_tensor: bool = True,
-    ) -> None:
-        self.augmentations = augmentations
-        # 默认归一化范围：CT使用HU值范围，PET使用SUV范围
-        default_ranges: Dict[str, Tuple[float, float]] = {
-            'ct': (-1024.0, 600.0),
-            'pet': (0.0, 30.0),
-        }
-        if normalization_ranges is not None:
-            default_ranges.update(normalization_ranges)
-        self.normalization_ranges = default_ranges
-        self.to_tensor = to_tensor
-
-    def _normalize(self, data: np.ndarray, min_val: float, max_val: float) -> np.ndarray:
-        data = np.clip(data, min_val, max_val)
-        return (data - min_val) / (max_val - min_val)
-
-    def __call__(self, sample: Dict[str, Any]) -> Dict[str, Any]:
-        modalities: Dict[str, np.ndarray] = sample['modalities']
-        label = sample['label']
-
-        # 拷贝并转换为float32，确保后续处理安全
-        arrays: Dict[str, np.ndarray] = {
-            key: value.astype(np.float32, copy=True)
-            for key, value in modalities.items()
-        }
-
-        # 归一化（如果配置中包含该模态）
-        for modality, (min_val, max_val) in self.normalization_ranges.items():
-            if modality in arrays:
-                arrays[modality] = self._normalize(arrays[modality], min_val, max_val)
-
-        # 应用数据增强。默认使用CT作为主图像键
-        if self.augmentations is not None:
-            if 'ct' in arrays:
-                main_key = 'ct'
-            else:
-                # 若不存在ct，则以迭代顺序的第一个模态作为主键
-                main_key = next(iter(arrays))
-
-            aug_inputs: Dict[str, np.ndarray] = {'image': arrays[main_key]}
-            for key, array in arrays.items():
-                if key == main_key:
-                    continue
-                aug_inputs[key] = array
-
-            augmented = self.augmentations(**aug_inputs)
-            arrays[main_key] = augmented['image']
-            for key in arrays.keys():
-                if key == main_key:
-                    continue
-                if key in augmented:
-                    arrays[key] = augmented[key]
-
-        # 转换为Tensor格式 (C, H, W)
-        if self.to_tensor:
-            tensor_modalities: Dict[str, torch.Tensor] = {}
-            for key, array in arrays.items():
-                if array.ndim != 3:
-                    raise ValueError(f"模态 '{key}' 的数组维度为 {array.ndim}，期望为3")
-                chw = np.transpose(array, (2, 0, 1)).astype(np.float32, copy=False)
-                tensor_modalities[key] = torch.from_numpy(chw)
-            label_tensor = torch.tensor(label, dtype=torch.long)
-            return {
-                'modalities': tensor_modalities,
-                'label': label_tensor
-            }
-
-        # 若不转换为Tensor，则仍以NumPy数组返回
-        return {
-            'modalities': arrays,
-            'label': label
-        }
-
-
 class LungCancerDataset(Dataset):
     """
     用于肺癌亚型分类的PyTorch数据集类。
@@ -200,6 +112,7 @@ class LungCancerDataset(Dataset):
         print(f"  ✓ 加载病灶切片信息: {len(self.lesion_slice_info)} 个受试者")
         
         # --- 2. 确定任务配置 ---
+        # 在这一步，根据task的要求，选择完成二分类还是三分类，并确定标签映射
         print(f"\n[任务配置] 任务: {task_name}, 折数: {fold}, 模式: {mode}")
         
         # 2.1 获取当前任务的配置
@@ -214,13 +127,14 @@ class LungCancerDataset(Dataset):
         print(f"  ✓ 任务病理类型: {task_pathologies}")
         
         # --- 3. 确定训练/验证集划分 ---
+        # 在splits.json中，以及按照center*label对受试者完成了分层k折划分，根据fold的设置，选择训练集和验证集。
         print(f"\n[数据划分] Fold {fold}, Mode: {mode}")
         
         # 3.1 验证fold编号
         if fold < 0 or fold >= len(self.splits):
             raise ValueError(f"fold必须在0到{len(self.splits)-1}之间，当前值: {fold}")
         
-        # 3.2 根据mode参数，从splits.json中确定subject_id列表
+        # 3.2 根据mode参数，选择fold对应的列表为验证集，其余为训练集
         if mode == 'val':
             # 验证集: 直接使用当前fold的val列表
             current_fold_data = self.splits[fold]
@@ -233,8 +147,8 @@ class LungCancerDataset(Dataset):
                 if i != fold:  # 排除当前fold
                     fold_subject_ids.extend(fold_data['val'])
             print(f"  ✓ 合并其他{len(self.splits)-1}个fold的val集: {len(fold_subject_ids)} 个受试者")
-        
-        # 3.3 第一次筛选: 与participants.tsv进行交叉验证，确保ID存在且有标签信息
+
+        # 3.3 基于fold的受试者筛选: 将splits列表中的受试者与participants.tsv进行交叉验证，确保ID存在且有标签信息
         # 构建participants中的subject_id到病理标签的映射
         participants_dict = {}
         for _, row in self.participants_df.iterrows():
@@ -253,8 +167,8 @@ class LungCancerDataset(Dataset):
         if missing_subjects:
             print(f"  ⚠ 警告: {len(missing_subjects)} 个受试者在participants.tsv中未找到: {missing_subjects[:5]}...")
         print(f"  ✓ 第一次筛选后: {len(filtered_subjects_with_labels)} 个受试者有标签信息")
-        
-        # 3.4 第二次筛选: 根据任务类型，只保留需要的标签类型
+
+        # 3.4 基于task的筛选: 根据分类任务的类型要求，只保留需要的标签类型
         final_subjects_with_labels = []
         excluded_count = 0
         for subject_id, pathology in filtered_subjects_with_labels:
@@ -397,28 +311,15 @@ class LungCancerDataset(Dataset):
         # 获取深度维度的大小
         depth = modality_volumes['CT'].shape[2]  # D
         
-        # 计算切片范围，并处理边界情况
-        start_idx = max(0, slice_idx - 1)
-        end_idx = min(depth, slice_idx + 2)  # +2 因为切片是左闭右开区间
+        # 3.1检查边界条件
+        if slice_idx <= 0 or slice_idx >= depth-1:
+            raise IndexError(f"Subject {subject_id} 的 slice_idx {slice_idx} 越界，必须在 [1, {depth-2}] 之间以确保前后切片存在")
         
-        # 对每个模态提取三个连续切片
+        # 3.2提取切片
         modality_slices = {}
         for h5_key in modality_config.keys():
-            slices = modality_volumes[h5_key][:, :, start_idx:end_idx]  # shape: (H, W, n)
-            
-            # 处理边界情况：确保始终有3个切片
-            num_slices = slices.shape[2]
-            if num_slices < 3:
-                if start_idx == 0:
-                    # 在前面padding（复制第一个切片）
-                    pad_count = 3 - num_slices
-                    slices = np.concatenate([np.repeat(slices[:, :, [0]], pad_count, axis=2), slices], axis=2)
-                else:
-                    # 在后面padding（复制最后一个切片）
-                    pad_count = 3 - num_slices
-                    slices = np.concatenate([slices, np.repeat(slices[:, :, [-1]], pad_count, axis=2)], axis=2)
-            
-            modality_slices[h5_key] = slices  # shape: (H, W, 3)
+            slices = modality_volumes[h5_key][:, :, slice_idx-1:slice_idx+2]  # shape: (H, W, 3)
+            modality_slices[h5_key] = slices
         
         # --- 4. 构建样本字典并交给transform处理 ---
         modalities_raw: Dict[str, np.ndarray] = {}
