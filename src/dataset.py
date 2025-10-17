@@ -12,6 +12,7 @@ import torch
 from torch.utils.data import Dataset
 from typing import Optional, Callable, Tuple, List, Dict, Any
 
+from src.transform import get_transforms
 
 class LungCancerDataset(Dataset):
     """
@@ -42,7 +43,6 @@ class LungCancerDataset(Dataset):
         task_name: str,
         fold: int,
         mode: str = 'train',
-        augmentations: Optional[Callable] = None,
         transform: Optional[Callable] = None
     ):
         """
@@ -57,7 +57,6 @@ class LungCancerDataset(Dataset):
             task_name (str): 任务名称，必须在tasks.json中定义 (e.g., '3-class_classification')
             fold (int): 交叉验证折数 (0-4)
             mode (str): 数据集模式，'train' 或 'val'
-            augmentations (callable, optional): 数据增强函数（向后兼容），当transform未提供时会用于默认的LungCancerTransform
             transform (callable, optional): 样本级变换函数，接收{'modalities': dict, 'label': int}并返回同结构（常用来做归一化、ToTensor、数据增强等）
         
         Raises:
@@ -72,10 +71,7 @@ class LungCancerDataset(Dataset):
         self.mode = mode
         self.task_name = task_name
         self.fold = fold
-        if transform is not None:
-            self.transform = transform
-        else:
-            self.transform = LungCancerTransform(augmentations=augmentations)
+        self.transform = get_transforms(mode=mode)
         
         # 参数验证
         if mode not in ['train', 'val']:
@@ -322,31 +318,28 @@ class LungCancerDataset(Dataset):
             modality_slices[h5_key] = slices
         
         # --- 4. 构建样本字典并交给transform处理 ---
-        modalities_raw: Dict[str, np.ndarray] = {}
-        for h5_key, output_key in modality_config.items():
-            # 保持 (H, W, 3) 格式，后续交由transform处理
-            modalities_raw[output_key] = modality_slices[h5_key].astype(np.float32)
-
         sample = {
-            'modalities': modalities_raw,
+            'ct': modality_slices['CT'].astype(np.float32),
+            'pet': modality_slices['PET'].astype(np.float32),
+            'mask': modality_slices['Lesion_mask'].astype(np.float32),
             'label': label
         }
 
         # --- 5. 应用transform（归一化、增强、ToTensor等） ---
-        if self.transform is not None:
-            transformed = self.transform(sample)
-            modalities_tensor = transformed['modalities']
-            label_tensor = transformed['label']
-        else:
-            # 回退逻辑：仅转换为Tensor (C, H, W)，不做归一化
-            modalities_tensor = {
-                key: torch.from_numpy(array.transpose(2, 0, 1)).float()
-                for key, array in modalities_raw.items()
-            }
-            label_tensor = torch.tensor(label, dtype=torch.long)
+        if self.transform:  
+            transformed_sample = self.transform(sample)
 
-        return modalities_tensor, label_tensor
+        model_inputs = {
+            'ct': transformed_sample['ct'],       # Tensor, shape: (3, H, W)
+            'pet': transformed_sample['pet'],     # Tensor, shape: (3, H, W)
+            'mask': transformed_sample['mask']    # Tensor, shape: (3, H, W)
+        }
+
+        label_tensor = transformed_sample['label']
+
+        return model_inputs, label_tensor
     
+
     def get_class_distribution(self) -> Dict[int, int]:
         """
         获取数据集中各类别的样本数量分布。
@@ -378,135 +371,85 @@ class LungCancerDataset(Dataset):
         return self.task_config.copy()
 
 
-def create_dataloaders(
-    data_dir: str,
-    participants_path: str,
-    tasks_path: str,
-    splits_path: str,
-    lesion_info_path: str,
-    task_name: str,
-    fold: int,
-    batch_size: int = 16,
-    num_workers: int = 4,
-    train_augmentations: Optional[Callable] = None,
-    val_augmentations: Optional[Callable] = None,
-    train_transform: Optional[Callable] = None,
-    val_transform: Optional[Callable] = None
-) -> Tuple[torch.utils.data.DataLoader, torch.utils.data.DataLoader]:
-    """
-    便捷函数: 创建训练和验证数据加载器。
-    
-    Args:
-        data_dir (str): HDF5数据目录
-        participants_path (str): 参与者信息文件路径
-        tasks_path (str): 任务配置文件路径
-        splits_path (str): 交叉验证划分文件路径
-        lesion_info_path (str): 病灶切片信息文件路径
-        task_name (str): 任务名称
-        fold (int): 交叉验证折数
-        batch_size (int): 批次大小
-        num_workers (int): 数据加载的工作进程数
-    train_augmentations (callable, optional): 训练集数据增强（与albumentations的Compose配合使用，自动注入默认transform）
-    val_augmentations (callable, optional): 验证集数据增强
-    train_transform (callable, optional): 训练集自定义transform（优先于train_augmentations）
-    val_transform (callable, optional): 验证集自定义transform
-    
-    Returns:
-        Tuple[DataLoader, DataLoader]: 训练和验证数据加载器
-    """
-    # 若未提供transform，则根据augmentations构建默认transform
-    if train_transform is None:
-        train_transform = LungCancerTransform(augmentations=train_augmentations)
-    if val_transform is None:
-        val_transform = LungCancerTransform(augmentations=val_augmentations)
-
-    # 创建训练数据集
-    train_dataset = LungCancerDataset(
-        data_dir=data_dir,
-        participants_path=participants_path,
-        tasks_path=tasks_path,
-        splits_path=splits_path,
-        lesion_info_path=lesion_info_path,
-        task_name=task_name,
-        fold=fold,
-        mode='train',
-        transform=train_transform
-    )
-    
-    # 创建验证数据集
-    val_dataset = LungCancerDataset(
-        data_dir=data_dir,
-        participants_path=participants_path,
-        tasks_path=tasks_path,
-        splits_path=splits_path,
-        lesion_info_path=lesion_info_path,
-        task_name=task_name,
-        fold=fold,
-        mode='val',
-        transform=val_transform
-    )
-    
-    # 创建数据加载器
-    train_loader = torch.utils.data.DataLoader(
-        train_dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=num_workers,
-        pin_memory=True
-    )
-    
-    val_loader = torch.utils.data.DataLoader(
-        val_dataset,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=num_workers,
-        pin_memory=True
-    )
-    
-    return train_loader, val_loader
-
-
-# 使用示例
+# ===================================================================
+# 模块自测试代码
+# ===================================================================
 if __name__ == "__main__":
-    """
-    使用示例: 展示如何使用LungCancerDataset类
-    """
-    # 定义路径
-    data_dir = "data/2_final_h5/"
-    participants_path = "metadata/participants.tsv"
-    tasks_path = "metadata/tasks.json"
-    splits_path = "metadata/splits.json"
-    lesion_info_path = "metadata/lesion_slice_info.json"
-    
-    # 构建默认transform（包含归一化、ToTensor，可选数据增强）
-    default_transform = LungCancerTransform()
+    import matplotlib.pyplot as plt
 
-    # 创建数据集
-    dataset = LungCancerDataset(
-        data_dir=data_dir,
-        participants_path=participants_path,
-        tasks_path=tasks_path,
-        splits_path=splits_path,
-        lesion_info_path=lesion_info_path,
-        task_name="3-class_classification",
+    # 定义路径
+    DATA_DIR = "data/2_final_h5/"
+    PARTICIPANTS_PATH = "metadata/participants.tsv"
+    TASKS_PATH = "metadata/tasks.json"
+    SPLITS_PATH = "metadata/splits.json"
+    LESION_INFO_PATH = "metadata/lesion_slice_info.json"
+
+    print("--- Running LungCancerDataset self-test ---")
+
+    # --- 2. 实例化数据集 ---
+    print("\n[INFO] Initializing training dataset for fold 0...")
+    train_dataset = LungCancerDataset(
+        data_dir=DATA_DIR,
+        participants_path=PARTICIPANTS_PATH,
+        tasks_path=TASKS_PATH,
+        splits_path=SPLITS_PATH,
+        lesion_info_path=LESION_INFO_PATH,
+        task_name="ADC_vs_SCC",
         fold=0,
-        mode='train',
-        transform=default_transform
+        mode='train'
     )
     
-    # 打印数据集信息
-    print(f"\n数据集大小: {len(dataset)}")
-    print(f"类别分布: {dataset.get_class_distribution()}")
-    print(f"任务信息: {dataset.get_task_info()}")
-    
-    # 获取一个样本
-    if len(dataset) > 0:
-        modalities, sample_label = dataset[1000]
-        print(f"\n样本模态:")
-        print(f"  - CT形状: {modalities['ct'].shape}")      # 应该是 (3, H, W)
-        print(f"  - PET形状: {modalities['pet'].shape}")    # 应该是 (3, H, W)
-        print(f"  - Mask形状: {modalities['mask'].shape}")  # 应该是 (3, H, W)
-        print(f"样本标签: {sample_label}")
-        print(f"CT值范围: [{modalities['ct'].min():.3f}, {modalities['ct'].max():.3f}]")
-        print(f"PET值范围: [{modalities['pet'].min():.3f}, {modalities['pet'].max():.3f}]")
-        print(f"Mask值范围: [{modalities['mask'].min():.3f}, {modalities['mask'].max():.3f}]")
+    print("\n[INFO] Initializing validation dataset for fold 0...")
+    val_dataset = LungCancerDataset(
+        data_dir=DATA_DIR,
+        participants_path=PARTICIPANTS_PATH,
+        tasks_path=TASKS_PATH,
+        splits_path=SPLITS_PATH,
+        lesion_info_path=LESION_INFO_PATH,
+        task_name="ADC_vs_SCC",
+        fold=0,
+        mode='val'
+    )
+
+    # --- 3. 检查数据集信息 ---
+    print(f"\nTrain dataset size: {len(train_dataset)}")
+    print(f"Validation dataset size: {len(val_dataset)}")
+    print(f"Train dataset class distribution: {train_dataset.get_class_distribution()}")
+    print(f"Validation dataset class distribution: {val_dataset.get_class_distribution()}")
+
+    # --- 4. 随机获取并检查一个训练样本 ---
+    if len(train_dataset) > 0:
+        print("\n--- Checking a random training sample ---")
+        random_idx = np.random.randint(0, len(train_dataset))
+        inputs, label = train_dataset[random_idx]
+
+        print(f"Sample Index: {random_idx}")
+        print(f"Inputs keys: {inputs.keys()}")
+        print(f"CT shape: {inputs['ct'].shape}, dtype: {inputs['ct'].dtype}")
+        print(f"PET shape: {inputs['pet'].shape}, dtype: {inputs['pet'].dtype}")
+        print(f"Mask shape: {inputs['mask'].shape}, dtype: {inputs['mask'].dtype}")
+        print(f"Label: {label}, dtype: {label.dtype}")
+        
+        # 检查数据范围
+        print(f"CT value range: [{inputs['ct'].min():.2f}, {inputs['ct'].max():.2f}]")
+        print(f"PET value range: [{inputs['pet'].min():.2f}, {inputs['pet'].max():.2f}]")
+        
+        # --- 5. 可视化样本 ---
+        # 可视化对于检查数据增强是否正确应用至关重要
+        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+        fig.suptitle(f"Train Sample #{random_idx} - Label: {label.item()}")
+        
+        # CT (取中心切片，即第1个通道)
+        axes[0].imshow(inputs['ct'][1, :, :], cmap='gray')
+        axes[0].set_title("CT (Center Slice)")
+        
+        # PET (取中心切片)
+        axes[1].imshow(inputs['pet'][1, :, :], cmap='hot')
+        axes[1].set_title("PET (Center Slice)")
+
+        # Mask (取中心切片)
+        axes[2].imshow(inputs['mask'][1, :, :], cmap='jet')
+        axes[2].set_title("Mask (Center Slice)")
+        
+        plt.tight_layout()
+        plt.show()
