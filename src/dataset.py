@@ -12,7 +12,7 @@ import torch
 from torch.utils.data import Dataset
 from typing import Optional, Callable, Tuple, List, Dict, Any
 
-from src.transform import get_transforms
+from src.transforms import get_transforms
 
 class LungCancerDataset(Dataset):
     """
@@ -71,7 +71,7 @@ class LungCancerDataset(Dataset):
         self.mode = mode
         self.task_name = task_name
         self.fold = fold
-        self.transform = get_transforms(mode=mode)
+        self.transform = transform
         
         # 参数验证
         if mode not in ['train', 'val']:
@@ -338,7 +338,7 @@ class LungCancerDataset(Dataset):
 
         label_tensor = transformed_sample['label']
 
-        return model_inputs, label_tensor
+        return model_inputs, label_tensor, subject_id
     
 
     def get_class_distribution(self) -> Dict[int, int]:

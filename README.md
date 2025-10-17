@@ -104,3 +104,5 @@ python scripts/train.py --config configs/main_config.yaml --exp_name "ResNet3D_b
 ```
 
 这种方式确保了每一份实验结果都与其对应的配置和代码状态相关联，保证了研究的可复现性。
+
+python scripts/train.py --task_name "ADC_vs_SCC" --fold 0 --lr 1e-5 --output_dir outputs/experiments/ADC_vs_SCC/fold_0
