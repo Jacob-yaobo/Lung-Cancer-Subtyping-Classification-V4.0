@@ -306,22 +306,23 @@ class LungCancerDataset(Dataset):
         # --- 3. 提取2.5D切片 ---
         # 获取深度维度的大小
         depth = modality_volumes['CT'].shape[2]  # D
-        
-        # 3.1检查边界条件
+
         if slice_idx <= 0 or slice_idx >= depth-1:
             raise IndexError(f"Subject {subject_id} 的 slice_idx {slice_idx} 越界，必须在 [1, {depth-2}] 之间以确保前后切片存在")
         
-        # 3.2提取切片
-        modality_slices = {}
-        for h5_key in modality_config.keys():
-            slices = modality_volumes[h5_key][:, :, slice_idx-1:slice_idx+2]  # shape: (H, W, 3)
-            modality_slices[h5_key] = slices
-        
+        # 3.1 为CT和PET提取前、中、后三层切片构建2.5D数据
+        ct_slices = modality_volumes['CT'][:, :, slice_idx-1:slice_idx+2]  # shape: (H, W, 3)
+        pet_slices = modality_volumes['PET'][:, :, slice_idx-1:slice_idx+2]  # shape: (H, W, 3) 
+
+        # 3.2 Lesion_mask只需要提取中间切片，并扩展channel
+        mask_slice_2d = modality_volumes['Lesion_mask'][:, :, slice_idx] # (W, H)
+        mask_slice = np.expand_dims(mask_slice_2d, axis=-1)
+
         # --- 4. 构建样本字典并交给transform处理 ---
         sample = {
-            'ct': modality_slices['CT'].astype(np.float32),
-            'pet': modality_slices['PET'].astype(np.float32),
-            'mask': modality_slices['Lesion_mask'].astype(np.float32),
+            'ct': ct_slices.astype(np.float32),
+            'pet': pet_slices.astype(np.float32),
+            'mask': mask_slice.astype(np.float32),
             'label': label
         }
 
