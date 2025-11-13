@@ -146,6 +146,7 @@ def main(args):
     # --- 4. 日志与训练循环 ---
     writer = SummaryWriter(log_dir=os.path.join(args.output_dir, 'logs'))
     best_metric = 0.0
+    primary_metric_key = 'auc_ovr_weighted' if num_classes > 2 else 'auc'
     
     for epoch in range(1, args.epochs + 1):
         print(f"\n--- Epoch {epoch}/{args.epochs} ---")
@@ -156,9 +157,12 @@ def main(args):
         scheduler.step()
         
         # --- 日志记录 ---
+        slice_auc = val_metrics['slice'].get(primary_metric_key, 0.0)
+        patient_auc = val_metrics['patient'].get(primary_metric_key, 0.0)
+
         print(f"Epoch {epoch} | Train Loss: {train_loss:.4f}")
-        print(f"  Slice-Level -> Acc: {val_metrics['slice']['accuracy']:.4f} | AUC: {val_metrics['slice'].get('auc_ovr_weighted', 0):.4f}")
-        print(f"  Patient-Level -> Acc: {val_metrics['patient']['accuracy']:.4f} | AUC: {val_metrics['patient'].get('auc_ovr_weighted', 0):.4f}")
+        print(f"  Slice-Level -> Acc: {val_metrics['slice']['accuracy']:.4f} | AUC: {slice_auc:.4f}")
+        print(f"  Patient-Level -> Acc: {val_metrics['patient']['accuracy']:.4f} | AUC: {patient_auc:.4f}")
 
         # TensorBoard
         writer.add_scalar('Loss/train', train_loss, epoch)
@@ -170,15 +174,17 @@ def main(args):
         
         # --- 模型保存 ---
         # 以 patient 级别的 AUC 作为核心指标
-        current_metric = val_metrics['patient'].get('auc_ovr_weighted', val_metrics['patient']['accuracy'])
+        current_metric = val_metrics['patient'].get(primary_metric_key, val_metrics['patient']['accuracy'])
+
         if current_metric > best_metric:
             best_metric = current_metric
-            print(f"🎉 New best model found at epoch {epoch} with Patient AUC: {best_metric:.4f}")
+            metric_name_for_print = "AUC" if primary_metric_key in val_metrics['patient'] else "Accuracy"
+            print(f"🎉 New best model found at epoch {epoch} with Patient {metric_name_for_print}: {best_metric:.4f}")
             torch.save(model.state_dict(), os.path.join(args.output_dir, f'best_model_fold_{args.fold}.pth'))
 
     writer.close()
     print("\n--- Training finished! ---")
-    print(f"Best Patient-Level AUC for fold {args.fold}: {best_metric:.4f}")
+    print(f"Best Patient-Level {metric_name_for_print} for fold {args.fold}: {best_metric:.4f}")
 
 
 if __name__ == '__main__':

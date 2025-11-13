@@ -4,7 +4,11 @@ import random
 import numpy as np
 import torch
 import pandas as pd
-from sklearn.metrics import accuracy_score, f1_score, roc_auc_score, confusion_matrix
+from sklearn.metrics import accuracy_score, f1_score, roc_auc_score, confusion_matrix, roc_curve, auc
+
+import matplotlib.pyplot as plt
+import seaborn as sns
+from itertools import cycle
 
 def set_seed(seed: int = 42):
     """设置随机种子以确保实验可复现。"""
@@ -63,3 +67,39 @@ def get_metrics(y_true, y_pred, y_prob=None, num_classes=3):
     metrics['confusion_matrix'] = cm.tolist()
     
     return metrics
+
+def plot_confusion_matrix(cm, class_names, title, save_path):
+    """绘制并保存混淆矩阵图。"""
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=class_names, yticklabels=class_names)
+    plt.title(title)
+    plt.ylabel('True Label')
+    plt.xlabel('Predicted Label')
+    plt.tight_layout()
+    plt.savefig(save_path)
+    plt.close()
+
+def plot_roc_curves(y_true, y_prob, num_classes, class_names, title, save_path):
+    """为多分类任务绘制并保存ROC曲线 (One-vs-Rest)。"""
+    plt.figure(figsize=(10, 8))
+    
+    # 将真实标签转换为one-hot编码
+    y_true_one_hot = np.eye(num_classes)[y_true]
+    
+    colors = cycle(['aqua', 'darkorange', 'cornflowerblue', 'green', 'red'])
+    for i, (color, class_name) in enumerate(zip(colors, class_names)):
+        fpr, tpr, _ = roc_curve(y_true_one_hot[:, i], y_prob[:, i])
+        roc_auc = auc(fpr, tpr)
+        plt.plot(fpr, tpr, color=color, lw=2,
+                 label=f'ROC curve of {class_name} (area = {roc_auc:0.2f})')
+
+    plt.plot([0, 1], [0, 1], 'k--', lw=2)
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title(title)
+    plt.legend(loc="lower right")
+    plt.tight_layout()
+    plt.savefig(save_path)
+    plt.close()

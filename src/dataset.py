@@ -306,22 +306,44 @@ class LungCancerDataset(Dataset):
         # --- 3. 提取2.5D切片 ---
         # 获取深度维度的大小
         depth = modality_volumes['CT'].shape[2]  # D
-
-        if slice_idx <= 0 or slice_idx >= depth-1:
-            raise IndexError(f"Subject {subject_id} 的 slice_idx {slice_idx} 越界，必须在 [1, {depth-2}] 之间以确保前后切片存在")
         
         # 3.1 为CT和PET提取前、中、后三层切片构建2.5D数据
-        ct_slices = modality_volumes['CT'][:, :, slice_idx-1:slice_idx+2]  # shape: (H, W, 3)
-        pet_slices = modality_volumes['PET'][:, :, slice_idx-1:slice_idx+2]  # shape: (H, W, 3) 
+        final_slices = {}
+        for key in ['CT', 'PET']:
+            volume = modality_volumes[key]
 
+            # 计算切片范围
+            start_idx = slice_idx - 1
+            end_idx = slice_idx + 2
+            
+            # 切片
+            slices = volume[:, :, max(0, start_idx) : min(depth, end_idx)]
+            
+            # 处理边界情况：确保始终有3个切片
+            num_slices_obtained = slices.shape[2]
+            if num_slices_obtained < 3:
+                if start_idx < 0:
+                    # 在前面padding（复制第一张切片）
+                    pad_count = 3 - num_slices_obtained
+                    first_slice = slices[:, :, [0]]
+                    padding = np.repeat(first_slice, pad_count, axis=2)
+                    slices = np.concatenate([padding, slices], axis=2)
+                else: # end_idx > depth
+                    # 在后面padding（复制最后一张切片）
+                    pad_count = 3 - num_slices_obtained
+                    last_slice = slices[:, :, [-1]]
+                    padding = np.repeat(last_slice, pad_count, axis=2)
+                    slices = np.concatenate([slices, padding], axis=2)
+            final_slices[key] = slices
+            
         # 3.2 Lesion_mask只需要提取中间切片，并扩展channel
         mask_slice_2d = modality_volumes['Lesion_mask'][:, :, slice_idx] # (W, H)
         mask_slice = np.expand_dims(mask_slice_2d, axis=-1)
 
         # --- 4. 构建样本字典并交给transform处理 ---
         sample = {
-            'ct': ct_slices.astype(np.float32),
-            'pet': pet_slices.astype(np.float32),
+            'ct': final_slices['CT'].astype(np.float32),
+            'pet': final_slices['PET'].astype(np.float32),
             'mask': mask_slice.astype(np.float32),
             'label': label
         }
