@@ -1,9 +1,11 @@
 import os
 
+import nibabel as nib
 import numpy as np
 import SimpleITK as sitk
 
 from skimage.filters import threshold_otsu
+from scipy.ndimage import label, generate_binary_structure
 
 from nnunetv2.evaluation.evaluate_predictions import region_or_label_to_mask
 from acvl_utils.morphology.morphology_helper import remove_all_but_largest_component
@@ -216,3 +218,47 @@ def crop_to_bounding_box(image: sitk.Image, bounding_box: tuple) -> sitk.Image:
     start_index = bounding_box[0:3]
     size = bounding_box[3:6]
     return sitk.RegionOfInterest(image, size, start_index)
+
+
+# ===================================================================
+# Segmentation Functions
+# Author: Jacob-yaobo
+# Date: 2025-11-13
+# ===================================================================
+def compute_suvmax_in_mask(pet_nifti_path: str, mask_nifti_path: str) -> float:
+    """返回 mask 区域内的 SUVmax；若 mask 为空则抛出 ValueError。"""
+    pet_img = nib.load(pet_nifti_path)
+    mask_img = nib.load(mask_nifti_path)
+
+    pet_data = pet_img.get_fdata(dtype=np.float32)
+    mask_data = mask_img.get_fdata(dtype=np.float32)
+
+    masked_values = pet_data[mask_data > 0]
+    if masked_values.size == 0:
+        raise ValueError(f"No positive voxels in mask: {mask_nifti_path}")
+
+    return float(masked_values.max())
+
+def segment_lesion_with_threshold(pet_path: str, mask_path: str, threshold: float) -> np.ndarray:
+
+    pet_img = nib.load(pet_path)
+    mask_img = nib.load(mask_path)
+    pet = pet_img.get_fdata(dtype=np.float32)
+    mask = mask_img.get_fdata(dtype=np.float32) > 0
+
+    candidates = pet >= threshold
+    if not np.any(candidates):
+        return np.zeros_like(pet, dtype=np.uint8)
+
+    struct = generate_binary_structure(rank=3, connectivity=3)
+    labeled, num = label(candidates, structure=struct)
+
+    sizes = {lbl: int((labeled == lbl).sum()) for lbl in range(1, num + 1)
+             if np.any((labeled == lbl) & mask)}
+    if not sizes:
+        return np.zeros_like(pet, dtype=np.uint8)
+
+    keep_label = max(sizes, key=sizes.get)
+    seg = (labeled == keep_label).astype(np.uint8)
+
+    return seg

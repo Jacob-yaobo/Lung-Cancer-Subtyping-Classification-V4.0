@@ -61,7 +61,7 @@ def test(model, data_loader, device, num_classes, class_names, output_dir):
         df_data[f'prob_{i}'] = all_probs_cat[:, i].numpy()
     df = pd.DataFrame(df_data)
     
-    patient_df = df.groupby('subject_id').mean()
+    patient_df = df.groupby('subject_id').mean() # 对一个patient的所有slice概率取平均（采用了probability average pooling的方式）
     
     patient_true_labels = patient_df['true_label'].astype(int).values
     patient_prob_cols = [f'prob_{i}' for i in range(num_classes)]
